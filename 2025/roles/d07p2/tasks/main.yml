@@ -1,0 +1,43 @@
+- name: 'set_fact: input'
+  ansible.builtin.set_fact:
+    input: >-
+      {{
+        (
+          lookup('ansible.builtin.file', 'input.txt')
+        ).splitlines()
+      }}
+
+- name: 'set_fact: total_columns'
+  ansible.builtin.set_fact:
+    total_columns: '{{ input[0] | length }}'
+
+- name: 'set_fact: input_trimmed'
+  ansible.builtin.set_fact:
+    input_trimmed: "{{ input | reject('eq', '.' * total_columns) }}"
+
+- name: 'set some facts'
+  ansible.builtin.set_fact:
+    rows: "{{ input_trimmed | map('list') }}"
+    start_column: "{{ input_trimmed[0].index('S') }}"
+
+- name: 'set some facts'
+  ansible.builtin.set_fact:
+    beam_columns: '{{ [start_column] }}'
+    beam_count: '{{ {start_column: 1} }}'
+
+- ansible.builtin.include_tasks:
+    file: loop_rows.yml
+  loop: '{{ rows[1:] }}'
+  loop_control:
+    label: loop
+    loop_var: row
+    index_var: row_idx
+
+- name: 'set_fact: solution'
+  ansible.builtin.set_fact:
+    solution: '{{ beam_count.values() | sum }}'
+
+- name: 'print solution'
+  tags: [print_action]
+  ansible.builtin.debug:
+    msg: '🎄 SOLUTION 🎄: {{ solution }}'

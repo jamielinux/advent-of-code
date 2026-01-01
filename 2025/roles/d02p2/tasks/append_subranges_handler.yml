@@ -1,0 +1,16 @@
+# If start = 10, end = 1000, then this loops through: [ 2, 3, 4 ]
+- ansible.builtin.include_tasks:
+    file: append_subranges.yml
+  # If none of the IDs have more than one digit, we can skip the range
+  # as there are no invalid IDs from 0-9.
+  when: id_range.end | string | length > 1
+  loop: >
+    {{
+      range(
+        id_range.start | string | length,
+        id_range.end | string | length + 1
+      ) | list
+    }}
+  loop_control:
+    label: loop
+    loop_var: num_digits

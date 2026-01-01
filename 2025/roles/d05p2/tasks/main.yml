@@ -1,0 +1,83 @@
+- name: 'set_fact: raw_input'
+  ansible.builtin.set_fact:
+    raw_input: >-
+      {{ lookup('ansible.builtin.file', 'input.txt') }}
+
+- name: 'set_fact: input'
+  ansible.builtin.set_fact:
+    input: "{{ raw_input.split('\n\n') }}"
+
+- name: 'set_fact: ranges'
+  ansible.builtin.set_fact:
+    ranges: '{{ input[0].splitlines() | community.general.version_sort }}'
+
+- name: 'set some facts'
+  ansible.builtin.set_fact:
+    fresh_ids_start: >-
+      {{
+        ranges
+        | string
+        | regex_replace('([0-9]+)-[0-9]+', '\1')
+        | from_yaml
+        | map('int')
+      }}
+    fresh_ids_end: >-
+      {{
+        ranges
+        | string
+        | regex_replace('[0-9]+-([0-9]+)', '\1')
+        | from_yaml
+        | map('int')
+      }}
+    available_ids: >-
+      {{
+        input[1].splitlines()
+        | community.general.version_sort
+        | map('int')
+      }}
+    merged_fresh_ids: []
+
+- name: 'set some more facts'
+  ansible.builtin.set_fact:
+    lowest_fresh_id: '{{ fresh_ids_start | first }}'
+    highest_fresh_id: "{{ fresh_ids_end | max }}"
+    fresh_id_ranges: '{{ fresh_ids_start | zip(fresh_ids_end) | list | unique }}'
+    merged_fresh_id_ranges: []
+    next_idx: 0
+    fresh_ids: []
+
+# --- EXAMPLE ---
+# "fresh_id_ranges": [
+#     [7, 8],
+#     [22, 28],
+#     [4, 9],
+#     ...
+# }
+
+- name: 'set_fact: total_fresh_id_ranges'
+  ansible.builtin.set_fact:
+    total_fresh_id_ranges: '{{ fresh_id_ranges | length }}'
+
+- ansible.builtin.include_tasks:
+    file: merge.yml
+  loop: '{{ fresh_id_ranges }}'
+  loop_control:
+    label: loop
+    loop_var: loop_range
+    index_var: merge_idx
+
+- name: 'set_fact: solution'
+  ansible.builtin.set_fact:
+    solution: 0
+
+- name: 'update solution'
+  ansible.builtin.set_fact:
+    solution: '{{ solution + item.end - item.start + 1 }}'
+  loop: '{{ merged_fresh_id_ranges }}'
+  loop_control:
+    label: loop
+
+- name: 'print solution'
+  tags: [print_action]
+  ansible.builtin.debug:
+    msg: '🎄 SOLUTION 🎄: {{ solution }}'

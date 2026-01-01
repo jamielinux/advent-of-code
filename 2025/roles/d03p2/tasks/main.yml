@@ -1,0 +1,24 @@
+- name: 'set_fact: input'
+  ansible.builtin.set_fact:
+    input: >-
+      {{
+        lookup('ansible.builtin.file', 'input.txt')
+        | regex_replace('^', '- ')
+        | regex_replace('\n', '\n- ')
+        | from_yaml
+      }}
+
+- name: 'set_fact: solution'
+  ansible.builtin.set_fact:
+    solution: 0
+
+- ansible.builtin.include_tasks:
+    file: loop_banks.yml
+  loop: '{{ input }}'
+  loop_control:
+    loop_var: bank
+
+- name: 'print solution'
+  tags: [print_action]
+  ansible.builtin.debug:
+    msg: '🎄 SOLUTION 🎄: {{ solution }}'

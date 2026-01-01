@@ -1,0 +1,50 @@
+- name: 'set_fact: input'
+  ansible.builtin.set_fact:
+    input: >-
+      {{
+        lookup('ansible.builtin.file', 'input.txt')
+        | regex_replace('^', '- ')
+        | regex_replace('\n', '\n- ')
+        | from_yaml
+      }}
+
+- name: 'set_fact: solution'
+  ansible.builtin.set_fact:
+    solution: 0
+
+# For each bank (eg, "429731856224817"), find the largest two-digit joltage
+# by picking the largest digit X (except last), then the largest digit Y
+# from the remaining digits after X. Concatenate X+Y for the joltage.
+- name: 'process banks and update solution'
+  ansible.builtin.set_fact:
+    solution: '{{ solution | int + largest_joltage | int }}'
+  vars:
+    # bank as list of ints: "429731..." => [4, 2, 9, 7, 3, 1, ...]
+    batteries: "{{ bank | string | trim | list | map('int') }}"
+    # largest digit, excluding the last: [4, 2, 9, 7, ...] => 9
+    largest_except_last_digit: '{{ batteries[0:-1] | max }}'
+    # index of first occurrence of that digit: 9 is at index 2
+    index_of_first_largest: >-
+      {{
+        lookup(
+          'ansible.utils.index_of',
+          batteries,
+          'eq',
+          largest_except_last_digit,
+          wantlist=true
+        ) | first
+      }}
+    # largest digit after that index: [7, 3, 1, 8, 5, ...] => 8
+    largest_from_remaining_digits: >-
+      {{ batteries[index_of_first_largest | int + 1 :] | max }}
+    # concatenate the two digits: "9" + "8" => "98"
+    largest_joltage: >-
+      {{ largest_except_last_digit | string + largest_from_remaining_digits | string }}
+  loop: '{{ input }}'
+  loop_control:
+    loop_var: bank
+
+- name: 'print solution'
+  tags: [print_action]
+  ansible.builtin.debug:
+    msg: '🎄 SOLUTION 🎄: {{ solution }}'

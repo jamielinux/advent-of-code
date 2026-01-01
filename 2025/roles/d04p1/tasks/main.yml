@@ -1,0 +1,68 @@
+- name: 'set_fact: input'
+  ansible.builtin.set_fact:
+    input: >-
+      {{
+        lookup('ansible.builtin.file', 'input.txt')
+        | regex_replace('^', '- "')
+        | regex_replace('\n', '"\n- "')
+        | regex_replace('$', '"')
+        | from_yaml
+      }}
+
+- name: 'set_fact: total_rows and total_cols'
+  ansible.builtin.set_fact:
+    total_rows: '{{ input | length }}'
+    total_cols: '{{ input[0] | length }}'
+
+# We create an expanded grid with an extra empty row at the beginning and end,
+# and extra empty columns at the beginning and end. This makes it simpler to
+# count adjacent cells containing '@'.
+- name: 'initialize our grid with an empty row'
+  ansible.builtin.set_fact:
+    grid: >-
+      {{
+        [
+          (
+            '.' * total_cols
+          ) | list
+        ]
+      }}
+
+- name: 'append rows from input to the grid'
+  ansible.builtin.set_fact:
+    grid: >-
+      {{ grid + [['.'] + row | string | list + ['.']] }}
+  loop: '{{ input }}'
+  loop_control:
+    label: 'row: {{ idx }}/{{ total_rows - 1 }}'
+    loop_var: row
+    index_var: idx
+
+- name: 'append one last empty row'
+  ansible.builtin.set_fact:
+    grid: >-
+      {{
+        grid +
+        [
+          (
+            '.' * total_cols
+          ) | list
+        ]
+      }}
+
+- name: 'set_fact: solution'
+  ansible.builtin.set_fact:
+    solution: 0
+
+- ansible.builtin.include_tasks:
+    file: loop_rows.yml
+  loop: '{{ grid[1:-1] }}'
+  loop_control:
+    label: 'row: {{ row_idx }}'
+    loop_var: row
+    index_var: row_idx
+
+- name: 'print solution'
+  tags: [print_action]
+  ansible.builtin.debug:
+    msg: '🎄 SOLUTION 🎄: {{ solution }}'

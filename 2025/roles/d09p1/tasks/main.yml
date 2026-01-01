@@ -1,0 +1,152 @@
+- name: 'set_fact: input'
+  ansible.builtin.set_fact:
+    input: >-
+      {{
+        (
+          lookup('ansible.builtin.file', 'input.txt')
+        ).splitlines()
+      }}
+
+# We give a score based on how close the tile is to each corner of the grid.
+# A higher score means it's closer.
+- name: 'set_fact: tiles'
+  ansible.builtin.set_fact:
+    tiles: >-
+      {{
+        tiles | default([]) +
+        [{
+          'x': (item | split(','))[0] | int,
+          'y': (item | split(','))[1] | int,
+          'top_left_score': -(item | split(',') | map('int') | sum),
+          'top_right_score': ((item | split(','))[0] | int) - ((item | split(','))[1] | int),
+          'bottom_left_score': ((item | split(','))[1] | int) - ((item | split(','))[0] | int),
+          'bottom_right_score': item | split(',') | map('int') | sum,
+        }]
+      }}
+  loop: '{{ input }}'
+  loop_control:
+    label: loop
+
+- name: 'set some facts'
+  ansible.builtin.set_fact:
+    highest_top_left_score: "{{ tiles | map(attribute='top_left_score') | max }}"
+    highest_top_right_score: "{{ tiles | map(attribute='top_right_score') | max }}"
+    highest_bottom_left_score: "{{ tiles | map(attribute='bottom_left_score') | max }}"
+    highest_bottom_right_score: "{{ tiles | map(attribute='bottom_right_score') | max }}"
+
+- name: 'find highest scoring tiles'
+  ansible.builtin.set_fact:
+    most_top_left_tiles: >-
+      {{
+        tiles | selectattr('top_left_score', 'eq', highest_top_left_score)
+      }}
+    most_top_right_tiles: >-
+      {{
+        tiles | selectattr('top_right_score', 'eq', highest_top_right_score)
+      }}
+    most_bottom_left_tiles: >-
+      {{
+        tiles | selectattr('bottom_left_score', 'eq', highest_bottom_left_score)
+      }}
+    most_bottom_right_tiles: >-
+      {{
+        tiles | selectattr('bottom_right_score', 'eq', highest_bottom_right_score)
+      }}
+
+- name: 'create a concatenated list of our highest scoring tiles'
+  ansible.builtin.set_fact:
+    highest_scoring_tiles: >-
+      {{
+        most_top_left_tiles
+        + most_top_right_tiles
+        + most_bottom_left_tiles
+        + most_bottom_right_tiles
+      }}
+
+# Here we draw the largest inner rectangle possible where none of its sides are
+# closer to the edge of the grid than any of our highest scoring tiles. For
+# example, if `#` are our highest scoring tiles then we can draw this rectangle:
+#
+# ................
+# ...#............
+# ................
+# .#.OOOOOOOOOO.#.
+# ...O........O...
+# ...O........O...
+# ...O........O...
+# ...OOOOOOOOOO#..
+# ...#............
+# ................
+#
+# We can eliminate all tiles that are inside or on the border of this inner
+# rectangle (except our highest scoring tiles).
+
+- name: 'set corners of inner rectangle'
+  ansible.builtin.set_fact:
+    inner_x_min: >-
+      {{
+        (
+          most_top_left_tiles | map(attribute='x')
+          + most_bottom_left_tiles | map(attribute='x')
+        ) | max
+      }}
+    inner_x_max: >-
+      {{
+        (
+          most_top_right_tiles | map(attribute='x')
+          + most_bottom_right_tiles | map(attribute='x')
+        ) | min
+      }}
+    inner_y_min: >-
+      {{
+        (
+          most_top_left_tiles | map(attribute='y')
+          + most_top_right_tiles | map(attribute='y')
+        ) | max
+      }}
+    inner_y_max: >-
+      {{
+        (
+          most_bottom_left_tiles | map(attribute='y')
+          + most_bottom_right_tiles | map(attribute='y')
+        ) | min
+      }}
+
+- name: 'find ignorable tiles'
+  ansible.builtin.set_fact:
+    tiles_inner_x: >-
+      {{
+        (
+          (tiles | selectattr('x', 'ge', inner_x_min))
+          + (tiles | selectattr('x', 'le', inner_x_max))
+        ) | difference(highest_scoring_tiles)
+      }}
+    tiles_inner_y: >-
+      {{
+        (
+          (tiles | selectattr('y', 'ge', inner_y_min))
+          + (tiles | selectattr('y', 'le', inner_y_max))
+        ) | difference(highest_scoring_tiles)
+      }}
+
+- name: 'set_fact: ignorable_tiles'
+  ansible.builtin.set_fact:
+    ignorable_tiles: '{{ tiles_inner_x | intersect(tiles_inner_y) }}'
+
+- name: 'set_fact: solution'
+  ansible.builtin.set_fact:
+    solution: >-
+      {{
+        [
+          solution | default(0),
+          ((item[0].x - item[1].x) | abs + 1) * ((item[0].y - item[1].y) | abs + 1),
+        ] | max
+      }}
+  loop: '{{ tiles | difference(ignorable_tiles) | permutations(2) }}'
+  loop_control:
+    label: loop
+
+- name: 'print solution'
+  tags: [print_action]
+  ansible.builtin.debug:
+    msg: '🎄 SOLUTION 🎄: {{ solution }}'

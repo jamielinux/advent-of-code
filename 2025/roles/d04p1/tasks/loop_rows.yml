@@ -1,0 +1,30 @@
+# Count paper rolls (`@`) in a square grid of 3x3 cells, centered on the paper
+# roll that is being processed on this iteration.
+
+# We minus 1 to exclude the center cell from the count of adjacent paper rolls.
+# We could just prepare the grid to exclude the center cell, but the code looks
+# nicer and easier to understand this way!
+
+- name: 'update solution'
+  ansible.builtin.set_fact:
+    solution: >-
+      {{
+        solution +
+        (
+          1 if
+          (
+            -1
+            + grid[row_idx+0][cell_idx-1:cell_idx+2] | select('eq', '@') | length
+            + grid[row_idx+1][cell_idx-1:cell_idx+2] | select('eq', '@') | length
+            + grid[row_idx+2][cell_idx-1:cell_idx+2] | select('eq', '@') | length
+          ) < 4
+          else 0
+        )
+      }}
+  loop: >-
+    {{ lookup('ansible.utils.index_of', row, 'eq', '@', wantlist=true) }}
+  loop_control:
+    label: >-
+      row: {{ row_idx }}/{{ total_rows - 1 }},
+      cell: {{ cell_idx }}
+    loop_var: cell_idx

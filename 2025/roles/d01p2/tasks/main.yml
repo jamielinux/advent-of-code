@@ -1,0 +1,51 @@
+- name: 'set_fact: input'
+  ansible.builtin.set_fact:
+    input: >-
+      {{
+        lookup('ansible.builtin.file', 'input.txt')
+        | regex_replace('R', '- ')
+        | regex_replace('L', '- -')
+        | from_yaml
+      }}
+
+- name: 'set some facts'
+  ansible.builtin.set_fact:
+    position: 50
+    solution: 0
+
+- name: 'update position and solution'
+  ansible.builtin.set_fact:
+    position: '{{ (position + rotation) % 100 }}'
+    solution: >-
+      {{
+        solution
+        + (rotation | abs // 100)
+        + (
+          1
+          if (
+            rotation | abs % 100 != 0
+            and (
+              (position + rotation) % 100 == 0
+              or (
+                position != 0
+                and (position + rotation) % 100 != 0
+                and (
+                  (rotation < 0 and position < (position + rotation) % 100)
+                  or (rotation > 0 and position > (position + rotation) % 100)
+                )
+              )
+            )
+          )
+          else 0
+        )
+      }}
+  loop: '{{ input }}'
+  loop_control:
+    label: '{{ idx }}'
+    loop_var: rotation
+    index_var: idx
+
+- name: 'print solution'
+  tags: [print_action]
+  ansible.builtin.debug:
+    msg: '🎄 SOLUTION 🎄: {{ solution }}'

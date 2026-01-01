@@ -1,0 +1,35 @@
+- name: 'merge fresh id ranges'
+  when: merge_idx == next_idx
+  block:
+
+    - name: 'set some facts'
+      ansible.builtin.set_fact:
+        start_id: '{{ loop_range[0] }}'
+        end_id_candidate: '{{ loop_range[1] }}'
+        next_idx_candidate: '{{ merge_idx + 1 }}'
+
+    - name: 'find end_id_candidate'
+      when: >
+        merge_idx < total_fresh_id_ranges - 1
+        and end_id_candidate >= fresh_id_ranges[item][0]
+      ansible.builtin.set_fact:
+        end_id_candidate: '{{ [fresh_id_ranges[item][1], end_id_candidate] | max }}'
+        next_idx_candidate: '{{ next_idx_candidate + 1 }}'
+      loop: '{{ range(merge_idx + 1, total_fresh_id_ranges) | list }}'
+      loop_control:
+        break_when:
+          - 'end_id_candidate < fresh_id_ranges[item][0]'
+
+    - name: 'update merged_fresh_id_ranges'
+      ansible.builtin.set_fact:
+        merged_fresh_id_ranges: >-
+          {{
+            merged_fresh_id_ranges +
+            [
+              {
+                'start': start_id,
+                'end': end_id_candidate,
+              }
+            ]
+          }}
+        next_idx: '{{ next_idx_candidate }}'

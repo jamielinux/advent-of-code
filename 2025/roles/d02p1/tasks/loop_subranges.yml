@@ -1,0 +1,13 @@
+- name: 'update solution'
+  when: concatenated_id >= id_subrange.start and concatenated_id <= id_subrange.end
+  ansible.builtin.set_fact:
+    solution: >-
+      {{ solution + concatenated_id }}
+  vars:
+    concatenated_id: '{{ ((id_truncated | string) * 2) | int }}'
+  loop: >-
+    {{ range(id_subrange.start_truncated, id_subrange.end_truncated + 1) | list }}
+  loop_control:
+    label: '{{ idx }}'
+    loop_var: id_truncated
+    index_var: idx

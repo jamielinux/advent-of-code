@@ -1,0 +1,59 @@
+- name: 'set_fact: input'
+  ansible.builtin.set_fact:
+    input: >-
+      {{
+        lookup('ansible.builtin.file', 'input.txt')
+        | regex_replace('-', '\n  end: ')
+        | regex_replace('^', '- start: ')
+        | regex_replace(',', '\n- start: ')
+        | regex_replace("(\d+)", '\1')
+        | from_yaml
+      }}
+
+# --- EXAMPLE ---
+# "input": [
+#     { "start": 17, "end": 43 },
+#     { "start": 7283, "end": 9156 },
+#     ...
+# ]
+
+- name: 'set some facts'
+  ansible.builtin.set_fact:
+    solution: 0
+    id_subranges: []
+
+- ansible.builtin.include_tasks:
+    file: append_ranges.yml
+  loop: '{{ input }}'
+  loop_control:
+    label: '{{ idx }}'
+    loop_var: id_range
+    index_var: idx
+
+# --- EXAMPLE ---
+# Given input range { "start": 68, "end": 1547 }
+# Split into subranges by orders of magnitude.
+# Ignore subranges with an odd number of digits (eg, 100-999 in this case).
+#
+# "id_subranges": [
+#     { "start": 68,   "end": 99,   "start_truncated": 6,  "end_truncated": 9  },
+#     { "start": 1000, "end": 1547, "start_truncated": 10, "end_truncated": 15 },
+#     ...
+# ]
+#
+# Then iterate through each truncated subrange (eg, 6-9, 10-15), concatenate
+# the value with itself (6 -> 66), and if it falls within the non-truncated
+# start/end then add it to the solution.
+
+- ansible.builtin.include_tasks:
+    file: loop_subranges.yml
+  loop: '{{ id_subranges }}'
+  loop_control:
+    label: '{{ idx }}'
+    loop_var: id_subrange
+    index_var: idx
+
+- name: 'print solution'
+  tags: [print_action]
+  ansible.builtin.debug:
+    msg: '🎄 SOLUTION 🎄: {{ solution }}'

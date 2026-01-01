@@ -1,0 +1,156 @@
+- name: 'set_fact: input'
+  ansible.builtin.set_fact:
+    input: |-
+      {{
+        (
+          lookup('ansible.builtin.file', 'input.txt')
+        ).splitlines()
+      }}
+
+- name: 'set_fact: connections'
+  ansible.builtin.set_fact:
+    connections: 1000
+
+- name: 'set_fact: top_n'
+  ansible.builtin.set_fact:
+    top_n: 3
+
+- name: 'set_fact: boxes'
+  ansible.builtin.set_fact:
+    boxes: >-
+      {{
+        boxes
+        | default({})
+        | combine({item: ''})
+      }}
+  loop: '{{ input }}'
+
+# --- EXAMPLE ---
+# "boxes": {
+#     "145,903,56": "",
+#     "175,842,730": "",
+#     "224,582,78": "",
+#     "284,531,647": "",
+#     "316,941,82": "",
+#     ...
+# }
+
+# We don't actually need to find the square root as ordering is still preserved
+# without it! So this saves some computation.
+- name: 'set_fact: distances'
+  ansible.builtin.set_fact:
+    distances: |-
+      {% for pair in boxes.keys() | list | combinations(2) %}
+      {% set a_parts = pair[0].split(',') %}
+      {% set b_parts = pair[1].split(',') %}
+      {% set dx = (b_parts[0] | int) - (a_parts[0] | int) %}
+      {% set dy = (b_parts[1] | int) - (a_parts[1] | int) %}
+      {% set dz = (b_parts[2] | int) - (a_parts[2] | int) %}
+      {% set d_sq = (dx * dx) + (dy * dy) + (dz * dz) %}
+      - {point_a: '{{ pair[0] }}', point_b: '{{ pair[1] }}', distance_squared: {{ d_sq }}}
+      {% endfor %}
+
+- name: 'parse and sort distances'
+  ansible.builtin.set_fact:
+    distances: "{{ distances | from_yaml | sort(attribute='distance_squared') }}"
+
+# --- EXAMPLE ---
+# "distances": [
+#     {
+#         "distance_squared": 23466,
+#         "point_a": "731,92,483",
+#         "point_b": "838,156,394"
+#     },
+#     {
+#         "distance_squared": 24994,
+#         "point_a": "493,287,851",
+#         "point_b": "593,224,956"
+#     },
+#     ...
+# ]
+
+- name: 'set_fact: shortest_distances'
+  ansible.builtin.set_fact:
+    shortest_distances: '{{ distances[:connections] }}'
+
+- name: 'create circuits'
+  ansible.builtin.set_fact:
+    boxes: |
+      {% set ns = namespace() %}
+      {% set ns.boxes = boxes %}
+      {% for box in shortest_distances %}
+        {% set box_a_circuit = ns.boxes[box.point_a] %}
+        {% set box_b_circuit = ns.boxes[box.point_b] %}
+        {% if box_a_circuit != box_b_circuit or (box_a_circuit == '' and box_b_circuit == '') %}
+          {% if box_a_circuit == '' and box_b_circuit == '' %}
+            {%
+              set ns.boxes =
+                ns.boxes
+                | combine({box.point_a: box.point_a})
+                | combine({box.point_b: box.point_a})
+            %}
+          {% elif box_a_circuit != '' and box_b_circuit == '' %}
+            {% set ns.boxes = ns.boxes | combine({box.point_b: box_a_circuit}) %}
+          {% elif box_a_circuit == '' and box_b_circuit != '' %}
+            {% set ns.boxes = ns.boxes | combine({box.point_a: box_b_circuit}) %}
+          {% elif box_a_circuit != '' and box_b_circuit != '' %}
+            {% set update_yaml %}
+            {% for item in ns.boxes | dict2items | selectattr('value', 'eq', box_b_circuit) %}
+            '{{ item.key }}': '{{ box_a_circuit }}'
+            {% endfor %}
+            {% endset %}
+            {% set ns.boxes = ns.boxes | combine(update_yaml | from_yaml | default({})) %}
+          {% endif %}
+        {% endif %}
+      {% endfor %}
+      {{ ns.boxes }}
+
+- name: 'parse boxes'
+  ansible.builtin.set_fact:
+    boxes: '{{ boxes | from_yaml }}'
+
+# --- EXAMPLE ---
+# "boxes": {
+#     "145,903,56": "145,903,56",
+#     "175,842,730": "78,829,914",
+#     "224,582,78": "",
+#     "284,531,647": "",
+#     "316,941,82": "145,903,56",
+#     ...
+# }
+
+- name: 'count circuit lengths'
+  ansible.builtin.set_fact:
+    circuit_lengths: >-
+      {{
+        boxes
+        | dict2items
+        | selectattr('value', 'ne', '')
+        | map(attribute='value')
+        | community.general.counter
+        | dict2items
+        | sort(attribute='value', reverse=true)
+      }}
+
+# --- EXAMPLE ---
+# "circuit_lengths": [
+#     {
+#         "key": "493,287,851",
+#         "value": 5
+#     },
+#     {
+#         "key": "731,92,483",
+#         "value": 3
+#     },
+#     ...
+# ]
+
+- name: 'set_fact: solution'
+  ansible.builtin.set_fact:
+    solution: '{{ solution | default(1) * item }}'
+  loop: "{{ circuit_lengths[:top_n] | map(attribute='value') }}"
+
+- name: 'print solution'
+  tags: [print_action]
+  ansible.builtin.debug:
+    msg: '🎄 SOLUTION 🎄: {{ solution }}'

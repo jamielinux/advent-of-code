@@ -1,0 +1,40 @@
+- name: 'skip column'
+  when: skip_next | bool
+  ansible.builtin.set_fact:
+    skip_next: false
+
+- name: 'process column'
+  when: not skip_next | bool
+  block:
+
+    - name: 'append value'
+      when: value != ''
+      ansible.builtin.set_fact:
+        values: '{{ values + [value | int] }}'
+        running_product: '{{ running_product * (value | int) }}'
+      vars:
+        value: >-
+          {{
+            input[:-1]
+            | map('regex_replace', '^.{' ~ column ~ '}(.).*$', '\1')
+            | select('match', '^[0-9]$')
+            | join
+          }}
+
+    - name: 'update solution'
+      when: operator in ['+', '*']
+      ansible.builtin.set_fact:
+        solution: >-
+          {{
+            solution +
+            (
+              (values | sum)
+              if operator == "+"
+              else running_product
+            )
+          }}
+        values: []
+        running_product: 1
+        skip_next: true
+      vars:
+        operator: '{{ (input | last)[column : column + 1] }}'

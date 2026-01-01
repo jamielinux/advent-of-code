@@ -1,0 +1,34 @@
+- name: 'set some facts'
+  ansible.builtin.set_fact:
+    batteries: "{{ bank | string | trim | list | map('int') }}"
+    largest_joltage: ''
+
+# Find each of the 12 digits greedily. On each iteration:
+#   - find the largest digit that leaves enough positions for the remaining picks
+#   - append it to largest_joltage
+#   - slice batteries to everything after that digit's position
+- name: 'find next largest digit'
+  ansible.builtin.set_fact:
+    # remaining batteries after this digit: [4,2,9,7,3,...] => [7,3,...]
+    batteries: '{{ batteries[idx | int + 1 :] }}'
+    # append digit to result: "" => "9" => "97" => ...
+    largest_joltage: '{{ largest_joltage ~ largest_digit }}'
+  vars:
+    # largest digit in searchable range: [4,2,9,7,3,...][:-11] => 9
+    largest_digit: >-
+      {{
+        (batteries[:1 - digits_left] if digits_left > 1 else batteries) | max
+      }}
+    # index of that digit: 9 is at index 2
+    idx: >-
+      {{
+        lookup('ansible.utils.index_of', batteries, 'eq', largest_digit, wantlist=true)
+        | first
+      }}
+  loop: '{{ range(12, 0, -1) | list }}'
+  loop_control:
+    loop_var: digits_left
+
+- name: 'update solution'
+  ansible.builtin.set_fact:
+    solution: '{{ solution + largest_joltage | int }}'

@@ -1,0 +1,85 @@
+- name: 'set_fact: start_time'
+  ansible.builtin.set_fact:
+    start_time: "{{ now().timestamp() }}"
+
+- name: 'set_fact: raw_input'
+  ansible.builtin.set_fact:
+    raw_input: |-
+      {{ lookup('ansible.builtin.file', 'input.txt') }}
+
+- name: 'set_fact: input'
+  ansible.builtin.set_fact:
+    input: |-
+      {{
+        raw_input
+        | regex_replace('^', '- "')
+        | regex_replace('\n', '"\n- "')
+        | regex_replace('$', '"')
+        | from_yaml
+      }}
+
+- name: 'set_fact: grid (sparse)'
+  ansible.builtin.set_fact:
+    grid: >-
+      {{
+        dict(
+          dict(
+            (
+              range(input | length)
+              | product(range(input[0] | length))
+              | list
+              | map('join', ',')
+            )
+            | zip(input | map('list') | flatten)
+          )
+          | dict2items
+          | selectattr('value', 'eq', '@')
+          | map(attribute='key')
+          | product([1])
+        )
+      }}
+
+# --- EXAMPLE ---
+# "grid": {
+#     "0,0": 1,
+#     "0,2": 1,
+#     "0,3": 1,
+#     "0,4": 1,
+#     ...
+# }
+
+- ansible.builtin.debug:
+    msg: 'done preparing the grid'
+  tags: [print_action]
+
+- name: 'set some facts'
+  ansible.builtin.set_fact:
+    start_rolls_count: '{{ grid | length }}'
+    removable_paper_rolls: []
+
+- name: 'remove paper rolls'
+  block:
+    - ansible.builtin.include_tasks:
+        file: remove_paper_rolls.yml
+      loop: '{{ range(start_rolls_count) | list }}'
+      loop_control:
+        label: '{{ idx }}'
+        loop_var: iteration
+        index_var: idx
+  rescue:
+    - ansible.builtin.meta: noop
+
+- ansible.builtin.debug:
+    msg: |
+      Ignore the task failure!
+      We're abusing block/rescue to break out of a loop 🤠
+  tags: [print_action]
+
+- name: 'set_fact: solution'
+  ansible.builtin.set_fact:
+    solution: "{{ start_rolls_count - (grid | length) }}"
+
+- name: 'print solution'
+  tags: [print_action]
+  ansible.builtin.debug:
+    msg: '🎄 SOLUTION 🎄: {{ solution | trim }}'

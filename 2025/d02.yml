@@ -1,0 +1,7 @@
+- name: d02
+  hosts: localhost
+  roles:
+    - role: d02p1
+      tags: [p1]
+    - role: d02p2
+      tags: [p2]

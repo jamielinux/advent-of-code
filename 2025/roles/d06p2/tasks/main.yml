@@ -1,0 +1,23 @@
+- name: 'set_fact: input'
+  ansible.builtin.set_fact:
+    input: >-
+      {{ lookup('ansible.builtin.file', 'input.txt').splitlines() }}
+
+- name: 'set some facts'
+  ansible.builtin.set_fact:
+    solution: 0
+    chars_per_row: '{{ input[0] | length }}'
+    values: []
+    running_product: 1
+    skip_next: false
+
+- ansible.builtin.include_tasks:
+    file: loop_columns.yml
+  loop: '{{ range(chars_per_row) | list | reverse }}'
+  loop_control:
+    loop_var: column
+
+- name: 'print solution'
+  tags: [print_action]
+  ansible.builtin.debug:
+    msg: '🎄 SOLUTION 🎄: {{ solution }}'

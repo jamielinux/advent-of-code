@@ -1,0 +1,31 @@
+- name: 'set some facts'
+  ansible.builtin.set_fact:
+    start_truncated: >-
+      {{
+        start | int // (10 ** (start | string | length - factor))
+      }}
+    end_truncated: >-
+      {{
+        end | int // (10 ** (end | string | length - factor))
+      }}
+
+- name: 'set_fact: end_truncated'
+  when: end | string | length == end_truncated | string | length
+  ansible.builtin.set_fact:
+    end_truncated: '{{ start_truncated }}'
+
+- name: 'append to id_subranges'
+  when: start | string | length > 1
+  ansible.builtin.set_fact:
+    id_subranges: >-
+      {{
+        id_subranges +
+        [
+          {
+            'start': start,
+            'end': end,
+            'start_truncated': start_truncated,
+            'end_truncated': end_truncated,
+          }
+        ]
+      }}

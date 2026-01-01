@@ -1,0 +1,69 @@
+- name: 'set start and end of this subrange'
+  ansible.builtin.set_fact:
+    start: >-
+      {{
+        [
+          ('1' + ('0' * (num_digits - 1))) | int,
+          id_range.start
+        ] | max
+      }}
+    end: >-
+      {{
+        [
+          ('9' * (num_digits)) | int,
+          id_range.end
+        ] | min
+      }}
+
+- name: 'start id with even number of digits'
+  when: start | string | length % 2 == 0
+  block:
+
+    - name: 'set the truncate start and end of this subrange'
+      ansible.builtin.set_fact:
+        start_truncated: >-
+          {{
+            start // (10 ** (start | string | length // 2))
+          }}
+        end_truncated: >-
+          {{
+            end // (10 ** (end | string | length // 2))
+          }}
+
+    - name: 'append to id_subranges'
+      when: start | string | length > 1
+      ansible.builtin.set_fact:
+        id_subranges: >-
+          {{
+            id_subranges +
+            [
+              {
+                'start': start,
+                'end': end,
+                'start_truncated': start_truncated,
+                'end_truncated': end_truncated,
+              }
+            ]
+          }}
+
+- name: 'start id with odd number of digits'
+  when: start | string | length % 2 == 1
+  block:
+
+    - name: 'set factors to empty list'
+      ansible.builtin.set_fact:
+        factors: []
+
+    - name: update factors
+      when: len | int % item == 0
+      ansible.builtin.set_fact:
+        factors: '{{ factors + [item] }}'
+      vars:
+        len: '{{ start | string | length }}'
+      loop: '{{ range(3, len | int + 1) | list }}'
+
+    - ansible.builtin.include_tasks:
+        file: append_subranges_by_factor.yml
+      loop: '{{ factors }}'
+      loop_control:
+        loop_var: factor

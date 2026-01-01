@@ -1,0 +1,88 @@
+- name: 'set_fact: raw_input'
+  ansible.builtin.set_fact:
+    raw_input: >-
+      {{ lookup('ansible.builtin.file', 'input.txt') }}
+
+- name: 'set_fact: input'
+  ansible.builtin.set_fact:
+    input: '{{ raw_input.splitlines() }}'
+
+- name: 'set_fact: operations'
+  ansible.builtin.set_fact:
+    operations: >-
+      {{
+        input[-1] | trim | regex_replace('  +', ' ') | split(' ')
+      }}
+
+# --- EXAMPLE ---
+# "operations": ["*", "+", "*", "+"]
+
+- name: 'set_fact: rows'
+  ansible.builtin.set_fact:
+    rows: >-
+      {{
+        rows | default([])
+        + [item | trim | regex_replace('  +', ' ') | split(' ') | map('int')]
+      }}
+  loop: '{{ input[:-1] }}'
+  loop_control:
+    label: loop
+
+# --- EXAMPLE ---
+# "rows": [
+#     [87, 412, 293, 56],
+#     [32, 17, 41, 458],
+#     [194, 63, 18, 102],
+#     ...
+# ]
+
+- name: 'set_fact: num_cols, num_rows'
+  ansible.builtin.set_fact:
+    num_cols: '{{ operations | length }}'
+    num_rows: '{{ rows | length }}'
+
+# This creates all (col_idx, row_idx) pairs and processes them in order.
+# For each cell, accumulate the value into col_X_values and update the
+# running product in col_X_product.
+- name: 'process all cells'
+  ansible.builtin.set_fact:
+    col_{{ pair[0] }}_values: '{{ col_values | list + [value] }}'
+    col_{{ pair[0] }}_product: '{{ col_product | int * value }}'
+  vars:
+    value: '{{ rows[pair[1]][pair[0]] }}'
+    col_values: "{{ lookup('vars', 'col_' ~ pair[0] ~ '_values', default=[]) }}"
+    col_product: "{{ lookup('vars', 'col_' ~ pair[0] ~ '_product', default=1) }}"
+  loop: '{{ range(num_cols) | product(range(num_rows)) }}'
+  loop_control:
+    loop_var: pair
+    label: 'col: {{ pair[0] }}, row: {{ pair[1] }}'
+
+# --- EXAMPLE ---
+# "col_0_values": [87, 32, 194]
+# "col_0_product": 540384
+# "col_1_values": [412, 17, 63]
+# "col_1_product": 441252
+# ...
+
+- name: 'set_fact: solution'
+  ansible.builtin.set_fact:
+    solution: 0
+
+- name: 'update solution'
+  ansible.builtin.set_fact:
+    solution: >-
+      {{ solution + (col_sum if operations[col_idx] == "+" else col_product | int) }}
+  vars:
+    col_sum: >-
+      {{ lookup('vars', 'col_' ~ col_idx ~ '_values') | sum }}
+    col_product: >-
+      {{ lookup('vars', 'col_' ~ col_idx ~ '_product') }}
+  loop: '{{ range(num_cols) | list }}'
+  loop_control:
+    loop_var: col_idx
+    label: 'col {{ col_idx }}'
+
+- name: 'print solution'
+  tags: [print_action]
+  ansible.builtin.debug:
+    msg: '🎄 SOLUTION 🎄: {{ solution }}'

@@ -1,0 +1,70 @@
+- name: 'set_fact: input'
+  ansible.builtin.set_fact:
+    input: >-
+      {{
+        lookup('ansible.builtin.file', 'input.txt')
+        | regex_replace('-', '\n  end: ')
+        | regex_replace('^', '- start: ')
+        | regex_replace(',', '\n- start: ')
+        | regex_replace("(\d+)", '\1')
+        | from_yaml
+      }}
+
+# --- EXAMPLE ---
+# "input": [
+#     { "start": 17, "end": 43 },
+#     { "start": 7283, "end": 9156 },
+#     ...
+# ]
+
+- name: 'set_fact: invalid_ids'
+  ansible.builtin.set_fact:
+    invalid_ids: []
+
+- name: 'set_fact: id_subranges'
+  ansible.builtin.set_fact:
+    id_subranges: []
+
+- ansible.builtin.include_tasks:
+    file: append_subranges_handler.yml
+  loop: '{{ input }}'
+  loop_control:
+    label: '{{ idx }}'
+    loop_var: id_range
+    index_var: idx
+
+# --- EXAMPLE ---
+# Given input range { "start": 68, "end": 1547 }
+# Split into subranges by orders of magnitude.
+#
+# For even-digit subranges, truncate to half the digits.
+# For odd-digit subranges, truncate to each factor (excluding 1).
+# Prime-digit subranges (3, 5, 7...) have no factors, so no truncated subranges.
+#
+# "id_subranges": [
+#     { "start": 68,   "end": 99,   "start_truncated": 6,  "end_truncated": 9  },
+#     { "start": 1000, "end": 1547, "start_truncated": 10, "end_truncated": 15 },
+#     ...
+# ]
+#
+# Then iterate through each truncated subrange (eg, 6-9, 10-15), concatenate
+# the value with itself (6 -> 66), and if it falls within the non-truncated
+# start/end then we record it as invalid.
+#
+# Additionally, we check for all-same-digit IDs (eg, 11111) and pair-repeated
+# IDs (eg, 121212, 131313).
+
+- ansible.builtin.include_tasks:
+    file: loop_subranges.yml
+  loop: '{{ id_subranges }}'
+  loop_control:
+    label: '{{ idx }}'
+    loop_var: id_subrange
+    index_var: idx
+
+# Deduplicate before summing. Some IDs like 222222 may appear multiple times:
+# 222|222 (half), 22|22|22 (pair-repeated), 2|2|2|2|2|2 (all-same-digit)
+- name: 'print solution'
+  tags: [print_action]
+  ansible.builtin.debug:
+    msg: '🎄 SOLUTION 🎄: {{ invalid_ids | sort | unique | sum }}'

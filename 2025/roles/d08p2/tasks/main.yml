@@ -1,0 +1,118 @@
+- name: 'set_fact: input'
+  ansible.builtin.set_fact:
+    input: >-
+      {{
+        (
+          lookup('ansible.builtin.file', 'input.txt')
+        ).splitlines()
+      }}
+
+- name: 'set_fact: boxes'
+  ansible.builtin.set_fact:
+    boxes: >-
+      {{
+        boxes
+        | default({})
+        | combine({item: ''})
+      }}
+  loop: '{{ input }}'
+
+# --- EXAMPLE ---
+# "boxes": {
+#     "145,903,56": "",
+#     "175,842,730": "",
+#     "224,582,78": "",
+#     "284,531,647": "",
+#     "316,941,82": "",
+#     ...
+# }
+
+# We don't actually need to find the square root as ordering is still preserved
+# without it! So this saves some computation.
+- name: 'set_fact: distances'
+  ansible.builtin.set_fact:
+    distances: |-
+      {% for pair in boxes.keys() | list | combinations(2) %}
+      {% set a_parts = pair[0].split(',') %}
+      {% set b_parts = pair[1].split(',') %}
+      {% set dx = (b_parts[0] | int) - (a_parts[0] | int) %}
+      {% set dy = (b_parts[1] | int) - (a_parts[1] | int) %}
+      {% set dz = (b_parts[2] | int) - (a_parts[2] | int) %}
+      {% set d_sq = (dx * dx) + (dy * dy) + (dz * dz) %}
+      - {point_a: '{{ pair[0] }}', point_b: '{{ pair[1] }}', distance_squared: {{ d_sq }}}
+      {% endfor %}
+
+- name: 'parse and sort distances'
+  ansible.builtin.set_fact:
+    distances: "{{ distances | from_yaml | sort(attribute='distance_squared') }}"
+
+# --- EXAMPLE ---
+# "distances": [
+#     {
+#         "distance_squared": 23466,
+#         "point_a": "731,92,483",
+#         "point_b": "838,156,394"
+#     },
+#     {
+#         "distance_squared": 24994,
+#         "point_a": "493,287,851",
+#         "point_b": "593,224,956"
+#     },
+#     ...
+# ]
+
+- name: 'create circuits and find last two boxes'
+  ansible.builtin.set_fact:
+    last_two_boxes: >-
+      {% set ns = namespace() %}
+      {% set ns.boxes = boxes %}
+      {% set ns.last_two_boxes = [] %}
+      {% set ns.connections_made = 0 %}
+      {% set target_connections = (input | length) - 1 %}
+      {% for box in distances %}
+        {% if ns.connections_made < target_connections %}
+          {% set box_a_circuit = ns.boxes[box.point_a] %}
+          {% set box_b_circuit = ns.boxes[box.point_b] %}
+          {% if box_a_circuit != box_b_circuit or (box_a_circuit == '' and box_b_circuit == '') %}
+            {% set ns.last_two_boxes = [box.point_a, box.point_b] %}
+            {% if box_a_circuit == '' and box_b_circuit == '' %}
+              {%
+                set ns.boxes =
+                  ns.boxes
+                  | combine({box.point_a: box.point_a})
+                  | combine({box.point_b: box.point_a})
+              %}
+            {% elif box_a_circuit != '' and box_b_circuit == '' %}
+              {% set ns.boxes = ns.boxes | combine({box.point_b: box_a_circuit}) %}
+            {% elif box_a_circuit == '' and box_b_circuit != '' %}
+              {% set ns.boxes = ns.boxes | combine({box.point_a: box_b_circuit}) %}
+            {% elif box_a_circuit != '' and box_b_circuit != '' %}
+              {% set update_yaml %}
+              {% for item in ns.boxes | dict2items | selectattr('value', 'eq', box_b_circuit) %}
+              '{{ item.key }}': '{{ box_a_circuit }}'
+              {% endfor %}
+              {% endset %}
+              {% set ns.boxes = ns.boxes | combine(update_yaml | from_yaml | default({})) %}
+            {% endif %}
+            {% set ns.connections_made = ns.connections_made + 1 %}
+          {% endif %}
+        {% endif %}
+      {% endfor %}
+      {{ ns.last_two_boxes }}
+
+- name: 'parse last_two_boxes'
+  ansible.builtin.set_fact:
+    last_two_boxes: '{{ last_two_boxes | from_yaml }}'
+
+- name: 'set_fact: solution'
+  ansible.builtin.set_fact:
+    solution: >-
+      {{
+        ((last_two_boxes[0] | split(','))[0] | int) *
+        ((last_two_boxes[1] | split(','))[0] | int)
+      }}
+
+- name: 'print solution'
+  tags: [print_action]
+  ansible.builtin.debug:
+    msg: '🎄 SOLUTION 🎄: {{ solution }}'

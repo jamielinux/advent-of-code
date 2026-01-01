@@ -1,0 +1,8 @@
+offline: true
+
+skip_list:
+  - name[casing]
+  - name[missing]
+  - no-handler
+  - var-naming[no-role-prefix]
+  - yaml[empty-lines]

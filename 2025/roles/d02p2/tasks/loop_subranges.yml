@@ -1,0 +1,83 @@
+# Check truncated IDs that repeat to fill the digit count.
+- name: 'append invalid id from truncated'
+  when: >
+    (
+      id_subrange.start | string | length % 2 == 0
+      or id_subrange.start | string | length != id_subrange.start_truncated | string | length
+    )
+    and multiplier > 1
+    and invalid_id | string | length == id_subrange.start | string | length
+    and invalid_id >= id_subrange.start
+    and invalid_id <= id_subrange.end
+  ansible.builtin.set_fact:
+    invalid_ids: '{{ invalid_ids + [invalid_id] }}'
+  vars:
+    multiplier: >-
+      {{
+        (id_subrange.start | string | length) // (id_truncated | string | length)
+      }}
+    invalid_id: >-
+      {{
+        (
+          (id_truncated | string)
+          * ((id_subrange.start | string | length // (id_truncated | string | length)) | int)
+        ) | int
+      }}
+  loop: >-
+    {{ range(id_subrange.start_truncated, id_subrange.end_truncated + 1) | list }}
+  loop_control:
+    label: loop
+    loop_var: id_truncated
+
+# Check if 1111, 2222 etc are within the range.
+- name: 'append invalid id if all same digits'
+  when: >
+    digits_repeated >= id_subrange.start
+    and digits_repeated <= id_subrange.end
+  vars:
+    digits_repeated: >-
+      {{
+        (
+          (digit | string) * (id_subrange.start | string | length)
+        ) | int
+      }}
+  ansible.builtin.set_fact:
+    invalid_ids: '{{ invalid_ids + [digits_repeated] }}'
+  loop: '{{ range(0, 10) | list }}'
+  loop_control:
+    loop_var: digit
+
+# For ranges with an even number of digits (starting from 6 digits), check
+# if there are any IDs made up of two digits repeated.
+- name: 'append invalid id if pair repeated'
+  when: >
+    id_subrange.start | string | length >= 6
+    and id_subrange.start | string | length % 2 == 0
+    and pair_repeated >= id_subrange.start
+    and pair_repeated <= id_subrange.end
+  ansible.builtin.set_fact:
+    invalid_ids: '{{ invalid_ids + [pair_repeated] }}'
+  vars:
+    pair_repeated: >-
+      {{
+        (
+          (pair | string) * (id_subrange.start | string | length // 2)
+        ) | int
+      }}
+  # Ansible evaluates the loop template regardless of the `when` conditions,
+  # so we have to use `max` otherwise `range` complains about floats.
+  loop: >-
+    {{
+      range(
+        id_subrange.start // (
+          10 ** [ (id_subrange.start | string | length - 2), 0 ] | max
+        ),
+        (
+          id_subrange.end // (
+            10 ** [ (id_subrange.end | string | length - 2), 0 ] | max
+          )
+        ) + 1
+      ) | list
+    }}
+  loop_control:
+    loop_var: pair
