@@ -1,86 +1,86 @@
-# Things I learned about Ansible in Advent of Code (2025)
+# Curious things I learned about Ansible in Advent of Code
 
-Advent of Code highlighted some interesting things about Ansible that are less
+Advent of code highlighted some interesting things about Ansible that are less
 noticeable in normal infrastructure code 🕵️
 
 > [!NOTE]
-> Jinja blocks (ie, `{% ... %}`) maybe don't suffer from the same problems,
-> but I restricted myself from using them in advent of code. Happily, this
-> meant I learnt a few curious things about Ansible!
+> Jinja blocks (ie, `{% ... %}`) can bypass all of this, but I restricted myself
+> from using them in advent of code. Happily, this meant I learnt a few curious
+> things about Ansible!
 
 ## Loops
 
 Ansible has a _ridiculous_ overhead when looping.
 
 > [!NOTE]
-> Run these with `ANSIBLE_STDOUT_CALLBACK=selective` to avoid testing how fast
-> your terminal can print.
+> Ran with `ANSIBLE_STDOUT_CALLBACK=selective` to avoid testing how fast my
+> terminal can print.
 
 Looping a single task is already slow:
 
 ```yaml
 - hosts: localhost
   tasks:
-    - set_fact:
+    - name: 'set a variable to true 50,000 times'
+      set_fact:
         foo: true
-      loop: '{{ range(10000) | list }}'
+      loop: '{{ range(50000) | list }}'
 
-# Executed in 13 seconds.
+# Executed in 57s.
 ```
 
-If you want to loop over several tasks, you can use `include_tasks`:
+To loop over several tasks, use `include_tasks` to include another file:
 
 ```yaml
 - hosts: localhost
   tasks:
     - include_tasks:
-        file: include.yml
-      loop: '{{ range(10000) | list }}'
+        file: other_tasks.yml
+      loop: '{{ range(50000) | list }}'
 ```
 
-If `include.yml` has the same single task as before, it runs 5x slower:
+If `other_tasks.yml` has the same single task as before, it runs 14x slower:
 
 ```yaml
-# include.yml:
+# other_tasks.yml:
 - set_fact:
     foo: true
 
-# Executed in 74 seconds.
+# Executed in 14m13s.
 ```
 
-There's huge overhead even if it's a `noop` task:
-
-```yaml
-# include.yml:
-- meta: noop
-
-# Executed in 17 seconds.
-```
+There's also a huge initialization overhead. In this case, Ansible spends
+~1m45s just preparing to start the loop!
 
 ### Why?
 
-In general, Ansible has a lot of loop overhead.
+I think every loop iteration copies and re-evaluates nearly everything (eg,
+task config, vars, templates, other internal structures etc).
 
-It's even worse when looping `include_tasks`, as Ansible seems to initialize
-all loop iterations before doing the tasks in the included file. In this case
-it spent 17 seconds just initializing.
+It's even worse when looping over an `include_tasks`. It seems every iteration
+is treated as a separate include (ie, each with its own config and copies of
+everything), and even just initializing is expensive.
 
-I tried the above with `range(100000)`:
+The slow-down when looping `include_tasks` scales ~quadratically with the
+number of iterations. It seems that:
 
-- ~9 minutes initializing the loops
-- ~20 seconds printing 100k lines about the loops before even looping
-- ~20 seconds running `noop` tasks
+- `include_tasks` gets deduped by searching a list for matches
+    - this is useful when running the same tasks on `N` hosts
+    - [permalink to `ansible/ansible` code][included_file_L213_217]
+- Python list search is `O(n)`.
+- When looping over an `include_tasks`, every iteration is unique (due to loop
+  vars) so can't be deduped:
+  - iteration `1`: search list (`0` items), no match so append
+  - iteration `2`: search list (`1` item), no match so append
+  - iteration `N`: search list (`N-1` items), no match so append
+  - total comparisons: `1 + 2 ... + N = N(N-1)/2 = O(n^2)`
+  - `N=50k` iterations means 1.25B failed comparisons
+
+([I opened a GitHub Issue upstream][gh-issue].)
 
 ### Mitigations
 
-When you need to loop over many tasks, you can avoid `include_tasks` by using:
-
-- [`product()`][product] or [`combinations()`][combinations]
-- task-level `when:` and `vars:` (both are re-evaluated on each loop iteration)
-- dynamic variable names (with [`vars` lookup][vars-lookup])
-- [inline If Expressions][inline-if] (eg, `{{ 0 if true else 1 }}`)
-
-You can avoid loops altogether in some cases by using filters in a chain:
+You can avoid loops in some cases by chaining filters like `map()`:
 
 ```yaml
 # Fast
@@ -94,9 +94,12 @@ You can avoid loops altogether in some cases by using filters in a chain:
   when: item | int > 0
 ```
 
-- [Jinja's Builtin Filters][jinja-builtin-filters]
-- [`ansible.builtin` filters][ansible-builtin-filters]
-- [`community.general` filters][community-general-filters]
+When you need to loop over many tasks, you can avoid `include_tasks` by using:
+
+- [`product()`][product] or [`combinations()`][combinations]
+- task-level `when:` and `vars:` (both are re-evaluated on each loop iteration)
+- dynamic variable names (with [`vars` lookup][vars-lookup])
+- [inline If Expressions][inline-if] (eg, `{{ 0 if true else 1 }}`)
 
 ## Appending to lists/dicts
 
@@ -116,11 +119,10 @@ Let's say we want to append the results of a loop into a list:
 # Executes in 8 seconds.
 ```
 
-If we increase the loops 5x (from 10 to 50 iterations), it doesn't take
-`8*5=40` seconds but 244 seconds (30x slower)!
+If we increase the iterations 5x (from 10 to 50), it doesn't take 40 seconds
+(ie, `8x5`) but 244 seconds (30x slower)!
 
 ```yaml
-# same as before, but:
 - name: 'append 50x in a loop (5M ints at the end)'
   set_fact:
     result: '{{ result + [my_list] }}'
@@ -155,8 +157,8 @@ The quadratic complexity(?) is probably because it needs to deserialize
 My guess at what's happening:
 
 - Ansible serializes modified variables after each loop iteration to persist
-  them for the next iteration
-- Serialization cost is proportional to the size of the variable
+  them for the next iteration.
+- Serialization cost is proportional to the size of the variable.
 - Task A:
     - Each iteration serializes 500k items
     - 5M items (`10*500k`) worth of serialization
@@ -169,7 +171,7 @@ My guess at what's happening:
 - Task B took `5.4` times longer than Task A.
 - This `5.4` be explained by serialization overhead: `27.5M / 5M = 5.5`
 
-Memory usage also grows quadratically. One of my solution runs (before I knew
+Memory usage also grows ~quadratically. One of my solution runs (before I knew
 about this overhead) managed to hit out-of-memory on my 64GiB RAM desktop! 😅
 
 I guess this is because *both* the old and new versions of `result` are in
@@ -177,8 +179,7 @@ memory, in *both* the serialized and deserialized forms.
 
 ### Mitigations
 
-To mitigate the compounding overhead, append in batches to smaller intermediate
-lists and combine them all at the end:
+Append in batches to smaller intermediate lists and combine at the end:
 
 - use [`batch()`][batch]
 - use dynamic variable names (with [`vars` lookup][vars-lookup])
@@ -202,6 +203,5 @@ lists and combine them all at the end:
 [combinations]: https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/combinations_filter.html
 [vars-lookup]: https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/vars_lookup.html
 [batch]: https://jinja.palletsprojects.com/en/stable/templates/#jinja-filters.batch
-[ansible-builtin-filters]: https://docs.ansible.com/projects/ansible/latest/collections/index_filter.html#ansible-builtin
-[community-general-filters]: https://docs.ansible.com/projects/ansible/latest/collections/community/general/index.html#filter-plugins
-[jinja-builtin-filters]: https://jinja.palletsprojects.com/en/stable/templates/#list-of-builtin-filters
+[included_file_L213_217]: https://github.com/ansible/ansible/blob/5e10a9160c96b238d788b1b196a4c3e80ba6a8bd/lib/ansible/playbook/included_file.py#L213-L217
+[gh-issue]: https://github.com/ansible/ansible/issues/86371

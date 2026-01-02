@@ -4,17 +4,18 @@
 
 My first ever [advent of code](https://adventofcode.com/2025/about)! 🎄
 
-Also see [Things I learned about Ansible in Advent of Code
-(2025)](./README.ansible.md).
+Also see
+[Curious things I learned about Ansible in Advent of Code](./README.ansible.md).
 
 ## Self-imposed rules
 
-Let's not make this too easy.
+Let's not make this too easy:
 
 - No LLMs or search engines.
 - No external commands (eg, `shell:`, `command:`, `lookup('pipe', ..)` etc).
 - No custom plugins (eg, `my_filter.py`).
 - No Jinja blocks (ie, `{% ... %}`).
+- No extra dependencies (eg, `jmespath` for `json_query`)
 
 ## Why Ansible?
 
