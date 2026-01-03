@@ -3,3 +3,5 @@
   roles:
     - role: d09p1
       tags: [p1]
+    - role: d09p2
+      tags: [p2]

@@ -1,0 +1,427 @@
+- name: 'set_fact: input'
+  ansible.builtin.set_fact:
+    input: >-
+      {{
+        (
+          lookup('ansible.builtin.file', 'input.txt')
+        ).splitlines()
+      }}
+
+- name: 'set_fact: total_tiles'
+  ansible.builtin.set_fact:
+    total_tiles: '{{ input | length }}'
+
+- name: 'set_fact: total_tile_pairs'
+  ansible.builtin.set_fact:
+    total_tile_pairs: '{{ (total_tiles * (total_tiles - 1)) // 2 }}'
+
+- name: 'set some facts useful for labels'
+  ansible.builtin.set_fact:
+    total_tiles0: '{{ total_tiles - 1 }}'
+    total_tile_pairs0: '{{ total_tile_pairs - 1 }}'
+
+# It's convenient to append to a list in a loop. Sadly, doing this in Ansible
+# can be extremely slow and memory intensive (see 2025/README.ansible.md).
+# We can mitigate this by processing in batches into smaller lists (eg, batch_0,
+# batch_1 ...) and then combine them all with `map()` at the end.
+- name: 'set batch size'
+  ansible.builtin.set_fact:
+    tiles_batch_size: '{{ range(total_tiles) | slice(128) | first | length }}'
+
+- name: 'set batch count'
+  ansible.builtin.set_fact:
+    tiles_total_batches: >-
+      {{ (total_tiles + tiles_batch_size - 1) // tiles_batch_size }}
+
+
+# --------------------------------------------------------#
+- ansible.builtin.debug:
+    msg: 'preparing tile data'
+  tags: [print_action]
+# --------------------------------------------------------#
+
+- name: 'set_fact: tiles'
+  ansible.builtin.set_fact:
+    tiles: []
+
+# For each corner tile, store the direction of the previous and next tiles
+# in the sequence. We use these later when computing invalid tiles (ie, which
+# way the border turns at each corner).
+- name: 'append tiles'
+  vars:
+    curr: "{{ item | split(',') | map('int') }}"
+    prev: "{{ input[(idx - 1) % total_tiles] | split(',') | map('int') }}"
+    next: "{{ input[(idx + 1) % total_tiles] | split(',') | map('int') }}"
+  ansible.builtin.set_fact:
+    tiles: >-
+      {{
+        tiles +
+        [{
+          'name': item,
+          'x': curr[0],
+          'y': curr[1],
+          'next_x': next[0],
+          'next_y': next[1],
+          'prev_n': prev[1] < curr[1],
+          'prev_e': prev[0] > curr[0],
+          'prev_s': prev[1] > curr[1],
+          'prev_w': prev[0] < curr[0],
+          'next_n': next[1] < curr[1],
+          'next_e': next[0] > curr[0],
+          'next_s': next[1] > curr[1],
+          'next_w': next[0] < curr[0],
+        }]
+      }}
+  loop: '{{ input }}'
+  loop_control:
+    label: 'tile: {{ idx }}/{{ total_tiles0 }}'
+    index_var: idx
+
+# --- EXAMPLE ---
+# "tiles": [
+#     {
+#         "name": "3,2",
+#         "x": 3,
+#         "y": 2,
+#         "next_x": 9,
+#         "next_y": 2,
+#         "prev_n": false,
+#         "prev_e": false,
+#         "prev_s": true,
+#         "prev_w": false,
+#         "next_n": false,
+#         "next_e": true,
+#         "next_s": false,
+#         "next_w": false
+#     },
+#     ...
+# ]
+
+
+# --------------------------------------------------------#
+- ansible.builtin.debug:
+    msg: 'preparing border tile data'
+  tags: [print_action]
+# --------------------------------------------------------#
+
+# If we join all the tiles in the input, we get a shape/polygon where the tiles
+# form the corners. `border_tiles` stores all tiles along the polygon border,
+# including the original tiles as well as the edges in between them.
+
+- name: 'calculate border tiles'
+  vars:
+    x_start: '{{ [tile.x, tile.next_x + 1] | min }}'
+    x_end: '{{ [tile.x, tile.next_x + 1] | max }}'
+    y_start: '{{ [tile.y, tile.next_y + 1] | min }}'
+    y_end: '{{ [tile.y, tile.next_y + 1] | max }}'
+  ansible.builtin.set_fact:
+    border_tiles_{{ idx // tiles_batch_size }}: >-
+      {{
+        lookup('vars', 'border_tiles_' ~ (idx // tiles_batch_size)) | default([])
+        + (range(x_start, x_end) | product(range(y_start, y_end)) | map('join', ','))
+      }}
+  loop: '{{ tiles }}'
+  loop_control:
+    label: 'tile: {{ idx }}/{{ total_tiles0 }}'
+    loop_var: tile
+    index_var: idx
+
+- name: 'combine border tiles batches'
+  ansible.builtin.set_fact:
+    border_tiles: >-
+      {{
+        range(tiles_total_batches)
+        | map('string')
+        | map('regex_replace', '^', 'border_tiles_')
+        | map('extract', vars)
+        | sum(start=[])
+      }}
+
+- name: 'free border tiles batches memory'
+  ansible.builtin.set_fact:
+    border_tiles_{{ item }}: []
+  loop: '{{ range(tiles_total_batches) | list }}'
+  loop_control:
+    label: '{{ idx }}'
+    index_var: idx
+
+- name: 'convert to dict for faster lookups'
+  ansible.builtin.set_fact:
+    border_tiles: '{{ dict(border_tiles | product([true])) }}'
+
+# --- EXAMPLE ---
+# "border_tiles": { "1,4": true, "1,5": true, "1,6": true, ... }
+
+
+# --------------------------------------------------------#
+- ansible.builtin.debug:
+    msg: 'preparing invalid tiles'
+  tags: [print_action]
+# --------------------------------------------------------#
+
+# `invalid_tiles` are the tiles immediately outside the polygon border.
+# A rectangle is invalid if any of its edges overlap with these invalid tiles,
+# because that would mean it extends outside the polygon.
+
+- name: 'calculate invalid tiles'
+  ansible.builtin.set_fact:
+    invalid_tiles_{{ idx // tiles_batch_size }}: >-
+      {{
+        lookup('vars', 'invalid_tiles_' ~ (idx // tiles_batch_size)) | default([])
+        + (
+          range(tile.x + 1, tile.next_x) | list | product([tile.y - 1]) | map('join', ',')
+          if (tile.prev_n and tile.next_e)
+          else []
+        )
+        + (
+          range(tile.next_x, tile.x + 2) | list | product([tile.y + 1]) | map('join', ',')
+          if (tile.prev_n and tile.next_w)
+          else []
+        )
+        + (
+          [tile.x - 1] | product(range(tile.next_y, tile.y + 2) | list) | map('join', ',')
+          if (tile.prev_e and tile.next_n)
+          else []
+        )
+        + (
+          [tile.x + 1] | product(range(tile.y + 1, tile.next_y + 1) | list) | map('join', ',')
+          if (tile.prev_e and tile.next_s)
+          else []
+        )
+        + (
+          range(tile.x - 1, tile.next_x + 1) | list | product([tile.y - 1]) | map('join', ',')
+          if (tile.prev_s and tile.next_e)
+          else []
+        )
+        + (
+          range(tile.next_x, tile.x) | list | product([tile.y + 1]) | map('join', ',')
+          if (tile.prev_s and tile.next_w)
+          else []
+        )
+        + (
+          [tile.x - 1] | product(range(tile.next_y, tile.y) | list) | map('join', ',')
+          if (tile.prev_w and tile.next_n)
+          else []
+        )
+        + (
+          [tile.x + 1] | product(range(tile.y - 1, tile.next_y + 1) | list) | map('join', ',')
+          if (tile.prev_w and tile.next_s)
+          else []
+        )
+      }}
+  loop: '{{ tiles }}'
+  loop_control:
+    label: 'tile: {{ idx }}/{{ total_tiles0 }}'
+    loop_var: tile
+    index_var: idx
+
+- name: 'combine invalid tiles batches'
+  ansible.builtin.set_fact:
+    invalid_tiles: >-
+      {{
+        range(tiles_total_batches)
+        | map('string')
+        | map('regex_replace', '^', 'invalid_tiles_')
+        | map('extract', vars)
+        | select()
+        | sum(start=[])
+      }}
+
+- name: 'free invalid tiles batches memory'
+  ansible.builtin.set_fact:
+    invalid_tiles_{{ item }}: []
+  loop: '{{ range(tiles_total_batches) | list }}'
+  loop_control:
+    label: '{{ idx }}'
+    index_var: idx
+
+- name: 'filter invalid tiles (remove any that overlap with border)'
+  ansible.builtin.set_fact:
+    invalid_tiles: "{{ invalid_tiles | reject('in', border_tiles) | list }}"
+
+# --- EXAMPLE ---
+# "invalid_tiles": ["0,3", "0,4", "0,5", ... ]
+
+- name: 'free border_tiles memory'
+  ansible.builtin.set_fact:
+    border_tiles: {}
+
+
+# --------------------------------------------------------#
+- ansible.builtin.debug:
+    msg: 'grouping invalid tiles'
+  tags: [print_action]
+# --------------------------------------------------------#
+
+- name: 'build invalid_x_by_row lookup'
+  vars:
+    # groupby(N) groups items by the element at index N.
+    # [["0","3"], ["1","3"], ["0","4"]] | groupby(1)  =>  [
+    #   (grouper="3", list=[["0","3"],["1","3"]]),
+    #   (grouper="4", list=[["0","4"]])
+    # ]
+    group_by_y: "{{ invalid_tiles | map('split', ',') | groupby(1) }}"
+    # rows_with_invalid_tiles  =>  [3, 4, ...]
+    # invalid_x_coordinates    =>  [[0, 1], [0], ...]
+    rows_with_invalid_tiles: "{{ group_by_y | map(attribute='grouper') | map('int') }}"
+    invalid_x_coordinates: >-
+      {{
+        group_by_y
+        | map(attribute='list')
+        | map('map', 'first')
+        | map('map', 'int')
+        | map('sort')
+      }}
+  ansible.builtin.set_fact:
+    invalid_x_by_row: "{{ dict(rows_with_invalid_tiles | zip(invalid_x_coordinates)) }}"
+
+- name: 'build invalid_y_by_col lookup'
+  vars:
+    group_by_x: "{{ invalid_tiles | map('split', ',') | groupby(0) }}"
+    cols_with_invalid_tiles: "{{ group_by_x | map(attribute='grouper') | map('int') }}"
+    invalid_y_coordinates: >-
+      {{
+        group_by_x
+        | map(attribute='list')
+        | map('map', 'last')
+        | map('map', 'int')
+        | map('sort')
+      }}
+  ansible.builtin.set_fact:
+    invalid_y_by_col: "{{ dict(cols_with_invalid_tiles | zip(invalid_y_coordinates)) }}"
+
+# --- EXAMPLE ---
+# "invalid_x_by_row": {3: [0, 1], 4: [0], ...}
+# "invalid_y_by_col": {0: [3, 4], 1: [3], ...}
+
+- name: 'free invalid_tiles memory'
+  ansible.builtin.set_fact:
+    invalid_tiles: []
+
+
+# --------------------------------------------------------#
+- ansible.builtin.debug:
+    msg: 'calculating tile reachability'
+  tags: [print_action]
+# --------------------------------------------------------#
+
+# For each tile, find how far it can "reach" in each direction before hitting
+# an invalid tile. Two tiles can form a valid rectangle only if they can each
+# reach the other's coordinates (ie, no invalid tiles block their path for the
+# x values and y values).
+#
+# This is similar to looping through every rectangle to check if any of its
+# edges overlap with invalid tiles. But that would be significantly slower.
+
+- name: 'set global coordinate bounds'
+  ansible.builtin.set_fact:
+    global_min_x: "{{ tiles | map(attribute='x') | min }}"
+    global_max_x: "{{ tiles | map(attribute='x') | max }}"
+    global_min_y: "{{ tiles | map(attribute='y') | min }}"
+    global_max_y: "{{ tiles | map(attribute='y') | max }}"
+
+- name: 'initialize tiles_with_reach_data'
+  ansible.builtin.set_fact:
+    tiles_with_reach_data: []
+
+- name: 'find how far each tile can reach before hitting an invalid tile'
+  vars:
+    invalid_y_in_col: >-
+      {{ invalid_y_by_col[tile.x] | default([]) }}
+    blocking_y_above: >-
+      {{ invalid_y_in_col | select('lt', tile.y) | list }}
+    blocking_y_below: >-
+      {{ invalid_y_in_col | select('gt', tile.y) | list }}
+    invalid_x_in_row: >-
+      {{ invalid_x_by_row[tile.y] | default([]) }}
+    blocking_x_left: >-
+      {{ invalid_x_in_row | select('lt', tile.x) | list }}
+    blocking_x_right: >-
+      {{ invalid_x_in_row | select('gt', tile.x) | list }}
+  ansible.builtin.set_fact:
+    tiles_with_reach_data: >-
+      {{
+        tiles_with_reach_data
+        + [tile | combine({
+          'y_min_reachable':
+            ((blocking_y_above | max) + 1)
+            if blocking_y_above
+            else ((global_min_y | int) - 1),
+          'y_max_reachable':
+            ((blocking_y_below | min) - 1)
+            if blocking_y_below
+            else ((global_max_y | int) + 1),
+          'x_min_reachable':
+            ((blocking_x_left | max) + 1)
+             if blocking_x_left
+             else ((global_min_x | int) - 1),
+          'x_max_reachable':
+            ((blocking_x_right | min) - 1)
+            if blocking_x_right
+            else ((global_max_x | int) + 1)
+        })]
+      }}
+  loop: '{{ tiles }}'
+  loop_control:
+    label: 'tile: {{ idx }}/{{ total_tiles0 }}'
+    loop_var: tile
+    index_var: idx
+
+- name: 'free tiles memory'
+  ansible.builtin.set_fact:
+    tiles: []
+
+
+# --------------------------------------------------------#
+- ansible.builtin.debug:
+    msg: 'calculating areas'
+  tags: [print_action]
+# --------------------------------------------------------#
+
+- name: 'set_fact: areas'
+  ansible.builtin.set_fact:
+    areas: []
+
+- name: 'compute areas of valid pairs'
+  when:
+    # We're only interested in pairs of tiles that can reach each other.
+    # By using our reachability data from the previous step, we can
+    # completely exclude any tile pairs that can't form a valid rectangle.
+    - pair[1].y >= pair[0].y_min_reachable
+    - pair[1].y <= pair[0].y_max_reachable
+    - pair[0].y >= pair[1].y_min_reachable
+    - pair[0].y <= pair[1].y_max_reachable
+    - pair[1].x >= pair[0].x_min_reachable
+    - pair[1].x <= pair[0].x_max_reachable
+    - pair[0].x >= pair[1].x_min_reachable
+    - pair[0].x <= pair[1].x_max_reachable
+  ansible.builtin.set_fact:
+    areas: >-
+      {{
+        areas +
+        [
+          (((pair[0].x - pair[1].x) | abs) + 1) *
+          (((pair[0].y - pair[1].y) | abs) + 1)
+        ]
+      }}
+  loop: '{{ tiles_with_reach_data | combinations(2) }}'
+  loop_control:
+    label: 'pair: {{ idx }}/{{ total_tile_pairs0 }}'
+    loop_var: pair
+    index_var: idx
+
+
+# --------------------------------------------------------#
+- ansible.builtin.debug:
+    msg: 'finding the solution'
+  tags: [print_action]
+# --------------------------------------------------------#
+
+- name: 'set solution to largest valid rectangle area'
+  ansible.builtin.set_fact:
+    solution: '{{ areas | max }}'
+
+- name: 'print solution'
+  tags: [print_action]
+  ansible.builtin.debug:
+    msg: '🎄 SOLUTION 🎄: {{ solution }}'

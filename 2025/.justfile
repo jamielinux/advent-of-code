@@ -121,3 +121,9 @@ d09p1 *args: (_run "09" "1" args)
 
 # Day 9 Part 1 (with full ansible output)
 d09p1-debug *args: (_run_debug "09" "1" args)
+
+# Day 9 Part 2
+d09p2 *args: (_run "09" "2" args)
+
+# Day 9 Part 2 (with full ansible output)
+d09p2-debug *args: (_run_debug "09" "2" args)
