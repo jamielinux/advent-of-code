@@ -2,10 +2,10 @@
 
 # Advent of Code, 2025 — Cursed Ansible Edition
 
-My first ever [advent of code](https://adventofcode.com/2025/about)! 🎄
+My first ever [advent of code][wiki-aoc]! 🎄
 
-Also see
-[Curious things I learned about Ansible in Advent of Code](./README.ansible.md).
+Also see [Curious things I discovered about Ansible in Advent of
+Code][notes-on-ansible].
 
 ## Self-imposed rules
 
@@ -14,8 +14,17 @@ Let's not make this too easy:
 - No LLMs or search engines.
 - No external commands (eg, `shell:`, `command:`, `lookup('pipe', ..)` etc).
 - No custom plugins (eg, `my_filter.py`).
-- No Jinja blocks (ie, `{% ... %}`).
-- No extra dependencies (eg, `jmespath` for `json_query`)
+- No extra dependencies (eg, `json_query`, which requires `jmespath`)
+- **No Jinja blocks (ie, `{% ... %}`) !!**
+
+### No Jinja blocks
+
+Jinja block loops are 100x faster than Ansible loops, and in some cases 1000x or
+more. I'll have to find a way to reduce iterations (or be forced to wait _days_
+for Ansible runs to finish 😅).
+
+Apparently people have used Ansible for advent of code before, but all of them
+used Jinja blocks!
 
 ## Why Ansible?
 
@@ -28,7 +37,7 @@ Ansible is quite unsuitable for advent of code:
 - Limited recursion
 - No unbounded loops
 - Limited loop flow control
-- It's incredibly slow
+- It's [incredibly slow][notes-on-ansible]
 
 But that's part of the fun!
 
@@ -36,15 +45,11 @@ But that's part of the fun!
 
 ## Solution notes
 
-Here are links to my notes on each puzzle.
+Here are my notes on each puzzle. I'm certainly not an algorithm expert, but
+my goals were to have fun and see how much I could stretch Ansible! 🤓
 
-I'm certainly not an algorithm expert, but the goals were to have fun and see
-how much I could stretch Ansible! 🤓
-
-> [!NOTE]
-> **The † means I had to use Jinja blocks.** Jinja loops are _much_ faster than
-> Ansible loops, but feel like bypassing Ansible. So I stuck with Ansible loops
-> unless the runtime would be days and if I was unable to think of a faster way.
+The original instructions are copyrighted, so I included my own wording with
+custom examples.
 
 | Day | Part 1                              | Part 2                              |
 | --: | ----------------------------------: | ----------------------------------: |
@@ -76,8 +81,6 @@ Each role needs inputs from [Advent of Code, 2025][aoc-2025].
 For example, for **Day 1 Part 1**, create the file
 `roles/d01p1/files/input.txt` with your inputs.
 
-[aoc-2025]: https://adventofcode.com/2025
-
 ### Run
 
 See available playbooks:
@@ -93,3 +96,7 @@ $ just d01p1
 ```
 
 </details>
+
+[notes-on-ansible]: ./README.ansible.md
+[wiki-aoc]: https://en.wikipedia.org/wiki/Advent_of_Code
+[aoc-2025]: https://adventofcode.com/2025

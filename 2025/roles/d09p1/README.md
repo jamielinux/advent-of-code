@@ -47,14 +47,15 @@ example, `3,4` and `6,5` can make a rectangle like this:
 ..............
 ```
 
-_Q: What is the area of the largest rectangle you can make?
+_Q: What is the area of the largest rectangle you can make?_
 
 ## Notes
 
 The naive approach is to just to iterate through every possible combination of
-tiles, calculate the areas, and take the largest.
+tiles, calculate the areas, and take the largest. But that's a lot of
+iterations and we can do better!
 
-But that's a lot of iterations and we can do better! So my approach was to:
+So my approach was to:
 
 - give each tile scores based on how close they are to each corner of the grid:
     - `top_left_score`
@@ -63,25 +64,29 @@ But that's a lot of iterations and we can do better! So my approach was to:
     - `bottom_right_score`
 - draw the largest rectangle possible where none of its sides are closer to any
   edge of the grid than any highest scoring tiles
-- for example, if `#` are our highest scoring tiles, we can draw this rectangle:
-
-    ```
-    ................
-    ...#............
-    ................
-    .#.OOOOOOOOOO.#.
-    ...O........O...
-    ...O........O...
-    ...O........O...
-    ...OOOOOOOOOO#..
-    ...#............
-    ................
-    ```
-
+    - see the ***Example diagram*** below
 - eliminate all tiles that are inside or on the border of this inner rectangle
   (except our highest scoring tiles)
 - iterate through every combination of the (very few) remaining tiles to find
   the largest area
+
+### Example diagram
+
+If `#` are our highest scoring tiles, we can draw this rectangle where none of
+its sides are closer to the edge of the grid than any highest scoring tiles:
+
+```
+................
+...#............
+................
+.#.OOOOOOOOOO.#.
+...O........O...
+...O........O...
+...O........O...
+...OOOOOOOOOO#..
+...#............
+................
+```
 
 ## Playbook runtime
 

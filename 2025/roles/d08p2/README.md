@@ -58,10 +58,12 @@ connections are actually made. In Part 2 we need `N-1` connections but can't
 predict how many candidate pairs that requires (as some pairs are noops when
 both boxes are already in the same circuit).
 
-My approach was to try progressively less granular grids until all boxes are
+Once again, we can't afford to iterate every possible pair. So I built on my
+approach in Part 1: try progressively less granular grids until all boxes are
 connected:
 
 - start with a guesstimated optimal grid size (eg, `12x12x12`)
+    - same formula I used in Part 1 (`1.2 * n^(1/3)`)
 - if not fully connected yet, try the next grid size down (eg, `9x9x9`)
 - if still not fully connected, try `6x6x6`, `3x3x3` and finally `2x2x2`
 - `2x2x2` guarantees success as all cells are adjacent
