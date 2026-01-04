@@ -1,0 +1,54 @@
+- name: 'connect boxes'
+  when:
+    - (connections_made | int) < (total_boxes | int) - 1
+    - box_a_circuit != box_b_circuit or box_a_circuit == ''
+  vars:
+    box_a_circuit: '{{ boxes[conn.point_a] }}'
+    box_b_circuit: '{{ boxes[conn.point_b] }}'
+  ansible.builtin.set_fact:
+    boxes: >-
+      {{
+        boxes | combine(
+          {conn.point_a: conn.point_a, conn.point_b: conn.point_a}
+          if (box_a_circuit == '' and box_b_circuit == '')
+          else (
+            {conn.point_b: box_a_circuit}
+            if (box_a_circuit != '' and box_b_circuit == '')
+            else (
+              {conn.point_a: box_b_circuit}
+              if (box_a_circuit == '' and box_b_circuit != '')
+              else (
+                boxes
+                | dict2items
+                | selectattr('value', 'eq', box_b_circuit)
+                | map('combine', {'value': box_a_circuit})
+                | items2dict
+              )
+            )
+          )
+        )
+      }}
+    last_two_boxes:
+      - '{{ conn.point_a }}'
+      - '{{ conn.point_b }}'
+    connections_made: '{{ (connections_made | int) + 1 }}'
+  loop: '{{ sorted_pairs }}'
+  loop_control:
+    label: 'conn: {{ idx }}/{{ sorted_pairs | length }}'
+    loop_var: conn
+    index_var: idx
+
+# --- EXAMPLE ---
+# "boxes": {
+#     "145,903,56": "145,903,56",
+#     "175,842,730": "78,829,914",
+#     "224,582,78": "",
+#     "284,531,647": "",
+#     "316,941,82": "145,903,56",
+#     ...
+# }
+
+- name: 'check if fully connected'
+  when: (connections_made | int) >= (total_boxes | int) - 1
+  ansible.builtin.set_fact:
+    is_fully_connected: true

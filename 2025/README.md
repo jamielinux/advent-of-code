@@ -55,7 +55,7 @@ how much I could stretch Ansible! 🤓
 |   5 |      [10s](./roles/d05p1/README.md) |       [5s](./roles/d05p2/README.md) |
 |   6 |      [30s](./roles/d06p1/README.md) |    [2m19s](./roles/d06p2/README.md) |
 |   7 |       [1s](./roles/d07p1/README.md) |      [13s](./roles/d07p2/README.md) |
-|   8 |  † [2m25s](./roles/d08p1/README.md) |  † [2m45s](./roles/d08p2/README.md) |
+|   8 |    [1m34s](./roles/d08p1/README.md) |    [2m06s](./roles/d08p2/README.md) |
 |   9 |      [13s](./roles/d09p1/README.md) |    [7m08s](./roles/d09p2/README.md) |
 
 ## Running the playbooks

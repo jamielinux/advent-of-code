@@ -1,21 +1,47 @@
 - name: 'set_fact: input'
   ansible.builtin.set_fact:
-    input: >-
+    input: |-
       {{
         (
           lookup('ansible.builtin.file', 'input.txt')
         ).splitlines()
       }}
 
+- name: 'set_fact: total_boxes'
+  ansible.builtin.set_fact:
+    total_boxes: '{{ input | length }}'
+
+- name: 'set some facts useful for labels'
+  ansible.builtin.set_fact:
+    total_boxes0: '{{ total_boxes - 1 }}'
+
+- name: 'find the largest coordinate value (x, y or z)'
+  ansible.builtin.set_fact:
+    max_coordinate_value: >-
+      {{
+        (
+          input | join(',') | split(',') | map('int') | max
+        ) + 1
+      }}
+
+
+# --------------------------------------------------------#
+- ansible.builtin.debug:
+    msg: 'preparing dict of junction boxes'
+  tags: [print_action]
+# --------------------------------------------------------#
+
 - name: 'set_fact: boxes'
   ansible.builtin.set_fact:
     boxes: >-
       {{
-        boxes
-        | default({})
-        | combine({item: ''})
+        boxes | default({}) | combine({box: ''})
       }}
   loop: '{{ input }}'
+  loop_control:
+    label: 'box: {{ idx }}/{{ total_boxes0 }}'
+    loop_var: box
+    index_var: idx
 
 # --- EXAMPLE ---
 # "boxes": {
@@ -27,82 +53,78 @@
 #     ...
 # }
 
-# We don't actually need to find the square root as ordering is still preserved
-# without it! So this saves some computation.
-- name: 'set_fact: distances'
-  ansible.builtin.set_fact:
-    distances: |-
-      {% for pair in boxes.keys() | list | combinations(2) %}
-      {% set a_parts = pair[0].split(',') %}
-      {% set b_parts = pair[1].split(',') %}
-      {% set dx = (b_parts[0] | int) - (a_parts[0] | int) %}
-      {% set dy = (b_parts[1] | int) - (a_parts[1] | int) %}
-      {% set dz = (b_parts[2] | int) - (a_parts[2] | int) %}
-      {% set d_sq = (dx * dx) + (dy * dy) + (dz * dz) %}
-      - {point_a: '{{ pair[0] }}', point_b: '{{ pair[1] }}', distance_squared: {{ d_sq }}}
-      {% endfor %}
 
-- name: 'parse and sort distances'
-  ansible.builtin.set_fact:
-    distances: "{{ distances | from_yaml | sort(attribute='distance_squared') }}"
+# --------------------------------------------------------#
+- ansible.builtin.debug:
+    msg: 'finding pairs'
+  tags: [print_action]
+# --------------------------------------------------------#
 
-# --- EXAMPLE ---
-# "distances": [
-#     {
-#         "distance_squared": 23466,
-#         "point_a": "731,92,483",
-#         "point_b": "838,156,394"
-#     },
-#     {
-#         "distance_squared": 24994,
-#         "point_a": "493,287,851",
-#         "point_b": "593,224,956"
-#     },
-#     ...
-# ]
+# To avoid iterating every unique pair of junction boxes, we can split the 3D
+# area into a grid of cells (eg, 12x12x12) and only pair a junction box with
+# others in the same cell or the 26 adjacent cells.
+#
+# The offset [dx, dy, dz] is an adjacent cell's position relative to the current
+# cell. To avoid double-counting pairs, we always use a forward offset. An
+# offset is "forward" if it's lexicographically greater than [0, 0, 0].
 
-- name: 'create circuits and find last two boxes'
+- name: 'define forward neighbour offsets'
   ansible.builtin.set_fact:
-    last_two_boxes: >-
-      {% set ns = namespace() %}
-      {% set ns.boxes = boxes %}
-      {% set ns.last_two_boxes = [] %}
-      {% set ns.connections_made = 0 %}
-      {% set target_connections = (input | length) - 1 %}
-      {% for box in distances %}
-        {% if ns.connections_made < target_connections %}
-          {% set box_a_circuit = ns.boxes[box.point_a] %}
-          {% set box_b_circuit = ns.boxes[box.point_b] %}
-          {% if box_a_circuit != box_b_circuit or (box_a_circuit == '' and box_b_circuit == '') %}
-            {% set ns.last_two_boxes = [box.point_a, box.point_b] %}
-            {% if box_a_circuit == '' and box_b_circuit == '' %}
-              {%
-                set ns.boxes =
-                  ns.boxes
-                  | combine({box.point_a: box.point_a})
-                  | combine({box.point_b: box.point_a})
-              %}
-            {% elif box_a_circuit != '' and box_b_circuit == '' %}
-              {% set ns.boxes = ns.boxes | combine({box.point_b: box_a_circuit}) %}
-            {% elif box_a_circuit == '' and box_b_circuit != '' %}
-              {% set ns.boxes = ns.boxes | combine({box.point_a: box_b_circuit}) %}
-            {% elif box_a_circuit != '' and box_b_circuit != '' %}
-              {% set update_yaml %}
-              {% for item in ns.boxes | dict2items | selectattr('value', 'eq', box_b_circuit) %}
-              '{{ item.key }}': '{{ box_a_circuit }}'
-              {% endfor %}
-              {% endset %}
-              {% set ns.boxes = ns.boxes | combine(update_yaml | from_yaml | default({})) %}
-            {% endif %}
-            {% set ns.connections_made = ns.connections_made + 1 %}
-          {% endif %}
-        {% endif %}
-      {% endfor %}
-      {{ ns.last_two_boxes }}
+    forward_offsets:
+      - [0, 0, 1]
+      - [0, 1, -1]
+      - [0, 1, 0]
+      - [0, 1, 1]
+      - [1, -1, -1]
+      - [1, -1, 0]
+      - [1, -1, 1]
+      - [1, 0, -1]
+      - [1, 0, 0]
+      - [1, 0, 1]
+      - [1, 1, -1]
+      - [1, 1, 0]
+      - [1, 1, 1]
 
-- name: 'parse last_two_boxes'
+# In Part 1 we knew we'd need the 1000 closest pairs, regardless of how many
+# connections are made. In Part 2 we need N-1 connections but can't predict how
+# many pairs that requires (as some pairs are noops when both boxes are already
+# in the same circuit).
+#
+# We'll start with the same formula as Part 1, and if we don't have enough
+# connections after that then keep making the grid less granular until we do.
+
+- name: 'guesstimate optimal grid divisions'
   ansible.builtin.set_fact:
-    last_two_boxes: '{{ last_two_boxes | from_yaml }}'
+    optimal_grid_divisions: >-
+      {{ [3, (1.2 * (total_boxes ** (1.0/3))) | round | int] | max }}
+
+- name: 'initialize connection tracking'
+  ansible.builtin.set_fact:
+    is_fully_connected: false
+    connections_made: 0
+    last_two_boxes: []
+
+# The last 2x2x2 grid is the same as brute force (because all cells are
+# adjacent), so we're guaranteed to get a solution in the end. In reality,
+# both the example input and real input should get a solution before this.
+- name: 'try grids'
+  vars:
+    grid_sizes_to_try: >-
+      {{
+        [optimal_grid_divisions, 12, 9, 6, 3, 2]
+        | select('le', optimal_grid_divisions)
+        | unique
+        | sort(reverse=true)
+      }}
+  ansible.builtin.include_tasks:
+    file: try_grids.yml
+
+
+# --------------------------------------------------------#
+- ansible.builtin.debug:
+    msg: 'calculating solution'
+  tags: [print_action]
+# --------------------------------------------------------#
 
 - name: 'set_fact: solution'
   ansible.builtin.set_fact:

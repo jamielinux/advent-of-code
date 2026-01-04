@@ -1,0 +1,212 @@
+# It's convenient to append to a list in a loop. Sadly, doing this in Ansible
+# can be extremely slow and memory intensive (see 2025/README.ansible.md).
+# We can mitigate this by processing in batches into smaller lists (eg, batch_0,
+# batch_1 ...) and then combine them all with `map()` at the end.
+
+# --------------------------------------------------------#
+# Group junction boxes by cell
+# --------------------------------------------------------#
+
+- name: 'set configuration'
+  ansible.builtin.set_fact:
+    cell_size: '{{ max_coordinate_value // grid_divisions }}'
+    boxes_by_cell: {}
+    target_batches: 64
+
+- name: 'reset batch variables'
+  ansible.builtin.set_fact:
+    adjacent_cell_pairs_{{ item }}: []
+    pairs_{{ item }}: []
+  loop: '{{ range(target_batches) | list }}'
+  loop_control:
+    label: 'batch {{ item }}'
+
+- name: 'group boxes by cell'
+  vars:
+    xyz: "{{ box.split(',') | map('int') | list }}"
+    cell_key: >-
+      {{
+        (xyz[0] // cell_size) ~ ',' ~
+        (xyz[1] // cell_size) ~ ',' ~
+        (xyz[2] // cell_size)
+      }}
+  ansible.builtin.set_fact:
+    boxes_by_cell: >-
+      {{
+        boxes_by_cell
+        | combine(
+          {
+            cell_key: boxes_by_cell[cell_key] | default([]) + [box]
+          }
+        )
+      }}
+  loop: '{{ input }}'
+  loop_control:
+    loop_var: box
+    label: 'box: {{ idx }}'
+    index_var: idx
+
+- name: 'set_fact: occupied_cells'
+  ansible.builtin.set_fact:
+    occupied_cells: '{{ boxes_by_cell.keys() | list }}'
+
+
+# --------------------------------------------------------#
+# Find candidate pairs (same-cell)
+# --------------------------------------------------------#
+
+- name: 'generate same-cell candidate pairs'
+  ansible.builtin.set_fact:
+    same_cell_pairs: >-
+      {{
+        boxes_by_cell.values()
+        | map('combinations', 2)
+        | sum(start=[])
+        | list
+      }}
+
+
+# --------------------------------------------------------#
+# Find candidate pairs (adjacent-cell)
+# --------------------------------------------------------#
+
+- name: 'set_fact: cell_iterations'
+  ansible.builtin.set_fact:
+    cell_iterations: '{{ (occupied_cells | length) * 13 }}'
+
+- name: 'set some facts'
+  ansible.builtin.set_fact:
+    cell_batch_size: >-
+      {{
+        [1, (cell_iterations + target_batches - 1) // target_batches] | max
+      }}
+
+- name: 'set_fact: cell_total_batches'
+  ansible.builtin.set_fact:
+    cell_total_batches: >-
+      {{
+        (cell_iterations + cell_batch_size - 1) // cell_batch_size
+      }}
+
+- name: 'generate adjacent-cell candidate pairs'
+  ansible.builtin.set_fact:
+    adjacent_cell_pairs_{{ idx // cell_batch_size }}: >-
+      {{
+        lookup('vars', 'adjacent_cell_pairs_' ~ (idx // cell_batch_size)) | default([])
+        + (
+          boxes_by_cell[item[0]]
+          | product(
+              boxes_by_cell[
+                item[0].split(',') | map('int') | zip(item[1]) | map('sum') | join(',')
+              ] | default([])
+            )
+          | list
+        )
+      }}
+  loop: '{{ occupied_cells | product(forward_offsets) | list }}'
+  loop_control:
+    label: 'pair: {{ idx }}'
+    index_var: idx
+
+- name: 'combine adjacent-cell pair batches'
+  ansible.builtin.set_fact:
+    adjacent_cell_pairs: >-
+      {{
+        range(cell_total_batches)
+        | map('string')
+        | map('regex_replace', '^', 'adjacent_cell_pairs_')
+        | map('extract', vars)
+        | select()
+        | sum(start=[])
+      }}
+
+
+# --------------------------------------------------------#
+# Combine candidate pairs (same-cell + adjacent-cell)
+# --------------------------------------------------------#
+
+- name: 'combine all candidate pairs'
+  ansible.builtin.set_fact:
+    candidate_pairs: '{{ same_cell_pairs + adjacent_cell_pairs }}'
+
+- name: 'get candidate pair count'
+  ansible.builtin.set_fact:
+    candidate_count: '{{ candidate_pairs | length }}'
+
+
+# --------------------------------------------------------#
+# Calculate distances between candidate pairs
+# --------------------------------------------------------#
+
+- name: 'set pairs batch size'
+  ansible.builtin.set_fact:
+    pairs_batch_size: >-
+      {{
+        [1, (candidate_count + target_batches - 1) // target_batches] | max
+      }}
+
+- name: 'set pairs num batches'
+  ansible.builtin.set_fact:
+    pairs_num_batches: >-
+      {{
+        (candidate_count + pairs_batch_size - 1) // pairs_batch_size
+      }}
+
+- name: 'compute distances for candidate pairs'
+  ansible.builtin.set_fact:
+    pairs_{{ idx // pairs_batch_size }}: >-
+      {{
+        lookup('vars', 'pairs_' ~ (idx // pairs_batch_size)) | default([])
+        +
+        [
+          {
+            'point_a': pair[0],
+            'point_b': pair[1],
+            'distance_squared':
+              ((pair[1].split(',')[0] | int) - (pair[0].split(',')[0] | int)) ** 2 +
+              ((pair[1].split(',')[1] | int) - (pair[0].split(',')[1] | int)) ** 2 +
+              ((pair[1].split(',')[2] | int) - (pair[0].split(',')[2] | int)) ** 2
+          }
+        ]
+      }}
+  loop: '{{ candidate_pairs }}'
+  loop_control:
+    label: 'pair: {{ idx }}'
+    loop_var: pair
+    index_var: idx
+
+- name: 'combine pairs batches'
+  ansible.builtin.set_fact:
+    sorted_pairs: >-
+      {{
+        range(pairs_num_batches)
+        | map('string')
+        | map('regex_replace', '^', 'pairs_')
+        | map('extract', vars)
+        | select()
+        | sum(start=[])
+      }}
+
+- name: 'sort pairs by distance'
+  ansible.builtin.set_fact:
+    sorted_pairs: "{{ sorted_pairs | sort(attribute='distance_squared') }}"
+
+
+# --------------------------------------------------------#
+# Check if grid is sufficient
+# --------------------------------------------------------#
+
+# We only paired boxes in same/adjacent cells, skipping non-adjacent cells.
+# Non-adjacent cells have a full cell gap between them, so any pair we skipped
+# has distance >= cell_size.
+#
+# If our Nth shortest distance < cell_size, no skipped pair could be in the top
+# N, so the optimal grid size is valid. Otherwise, fall back to a 2x2x2 grid
+# (which guarantees all pairs are considered since every cell is adjacent).
+
+- name: 'check if grid is sufficient'
+  when:
+    - (sorted_pairs | length) >= connections
+    - sorted_pairs[connections - 1].distance_squared < (cell_size ** 2)
+  ansible.builtin.set_fact:
+    grid_sufficient: true

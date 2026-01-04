@@ -1,0 +1,32 @@
+# Recursively try grid sizes until fully connected or no more grids.
+
+- name: 'set current and remaining grids'
+  ansible.builtin.set_fact:
+    current_grid: '{{ grid_sizes_to_try[0] }}'
+    remaining_grids: '{{ grid_sizes_to_try[1:] }}'
+
+# --------------------------------------------------------#
+- ansible.builtin.debug:
+    msg: >-
+      trying {{ ([current_grid] * 3) | join('x') }} grid
+  tags: [print_action]
+# --------------------------------------------------------#
+
+- name: 'find pairs'
+  vars:
+    grid_divisions: '{{ current_grid }}'
+  ansible.builtin.include_tasks:
+    file: grid_find_pairs.yml
+
+- name: 'connect boxes'
+  ansible.builtin.include_tasks:
+    file: connect_junction_boxes.yml
+
+- name: 'try next grid if not fully connected'
+  when:
+    - not is_fully_connected | bool
+    - (remaining_grids | length) > 0
+  vars:
+    grid_sizes_to_try: '{{ remaining_grids }}'
+  ansible.builtin.include_tasks:
+    file: try_grids.yml
