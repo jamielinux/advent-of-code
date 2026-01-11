@@ -1,6 +1,6 @@
 <a id="readme"></a>
 
-# Advent of Code, 2025 — Cursed Ansible Edition
+# Advent of Code, 2025 — Ansible Edition
 
 My first ever [advent of code][wiki-aoc]! 🎄
 
@@ -12,16 +12,16 @@ Code][notes-on-ansible].
 Let's not make this too easy:
 
 - No LLMs or search engines.
-- No external commands (eg, `shell:`, `command:`, `lookup('pipe', ..)` etc).
+- No external commands (eg, `ansible.builtin.shell` etc).
 - No custom plugins (eg, `my_filter.py`).
-- No extra dependencies (eg, `json_query`, which requires `jmespath`)
-- **No Jinja blocks (ie, `{% ... %}`) !!**
+- No extra dependencies (eg, `json_query`)
+- **No Jinja blocks (ie, `{% … %}`) !!**
 
 ### No Jinja blocks
 
-Jinja block loops are 100x faster than Ansible loops, and in some cases 1000x or
-more. I'll have to find a way to reduce iterations (or be forced to wait _days_
-for Ansible runs to finish 😅).
+*Jinja block loops* are hundreds of times faster than *Ansible loops*,
+so without them I have to find a way to optimize the number of iterations (or
+be forced to wait _days_ for Ansible runs to finish 😅).
 
 Apparently people have used Ansible for advent of code before, but all of them
 used Jinja blocks!
@@ -62,6 +62,9 @@ custom examples.
 |   7 |       [1s](./roles/d07p1/README.md) |      [13s](./roles/d07p2/README.md) |
 |   8 |    [1m34s](./roles/d08p1/README.md) |    [2m06s](./roles/d08p2/README.md) |
 |   9 |      [13s](./roles/d09p1/README.md) |    [7m08s](./roles/d09p2/README.md) |
+|  10 |                           (pending) |                           (pending) |
+|  11 |                           (pending) |                           (pending) |
+|  12 |                           (pending) |                           (pending) |
 
 ## Running the playbooks
 
@@ -97,6 +100,6 @@ $ just d01p1
 
 </details>
 
-[notes-on-ansible]: ./README.ansible.md
+[notes-on-ansible]: https://jamielinux.com/blog/curious-things-i-discovered-about-ansible-in-advent-of-code/
 [wiki-aoc]: https://en.wikipedia.org/wiki/Advent_of_Code
 [aoc-2025]: https://adventofcode.com/2025
